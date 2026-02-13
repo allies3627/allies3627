@@ -17,8 +17,6 @@
             overflow: hidden;
         }
         .header { padding: 15px; text-align: center; }
-        
-        /* 觀測窗：限制玩家只能看到局部來增加難度 */
         #viewport {
             width: 90vw;
             height: 60vh;
@@ -30,15 +28,13 @@
             border-radius: 10px;
         }
         #viewport::-webkit-scrollbar { display: none; } 
-
         #game-board {
             display: grid;
             gap: 2px;
-            padding: 100px; /* 給予飛出空間 */
+            padding: 150px; /* 增加邊距確保有空間移出 */
             transition: transform 0.3s ease;
             transform-origin: top left;
         }
-
         .block {
             display: flex;
             align-items: center;
@@ -47,36 +43,14 @@
             border-radius: 4px;
             cursor: pointer;
             user-select: none;
-            transition: transform 0.4s ease-out, opacity 0.4s;
+            transition: transform 0.3s linear, opacity 0.3s;
             font-weight: bold;
             box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+            position: relative;
+            z-index: 2;
         }
-
-        .block.shake { animation: shake 0.2s; }
-        @keyframes shake {
-            0% { transform: scale(1); }
-            50% { transform: scale(0.9); }
-            100% { transform: scale(1); }
-        }
-
-        .controls {
-            padding: 15px;
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 10px;
-            z-index: 10;
-        }
-        button {
-            padding: 10px 15px;
-            border: none;
-            border-radius: 5px;
-            background: #444;
-            color: white;
-            font-size: 14px;
-            cursor: pointer;
-        }
-        .btn-next { background: #27ae60; }
+        .controls { padding: 15px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; z-index: 10; }
+        button { padding: 10px 15px; border: none; border-radius: 5px; background: #444; color: white; font-size: 14px; }
         .btn-danger { background: #c0392b; }
     </style>
 </head>
@@ -84,7 +58,7 @@
 
     <div class="header">
         <div id="level-info">載入中...</div>
-        <div style="font-size: 12px; color: #888; margin-top: 5px;">滑動螢幕來查看隱藏區域</div>
+        <div style="font-size: 12px; color: #ff4d4d;" id="status-msg">點擊箭頭移動，撞到障礙物即失敗！</div>
     </div>
 
     <div id="viewport">
@@ -94,15 +68,15 @@
     <div class="controls">
         <button onclick="changeZoom(-0.2)">－ 縮小</button>
         <button onclick="changeZoom(0.2)">＋ 放大</button>
-        <button onclick="resetLevel()">重置本關</button>
-        <button class="btn-danger" onclick="clearSave()">重頭開始</button>
+        <button class="btn-danger" onclick="initGame()">重置本關</button>
+        <button style="background: #7f8c8d;" onclick="clearSave()">重頭開始</button>
     </div>
 
     <script>
-        // 1. 初始化存檔邏輯
         let currentLevel = parseInt(localStorage.getItem('tapAwayLevel')) || 1;
         let zoomLevel = 1.0;
         let gameState = [];
+        let isMoving = false; // 防止連續點擊造成混亂
         const directions = [
             { icon: '↑', dx: 0, dy: -1 },
             { icon: '↓', dx: 0, dy: 1 },
@@ -111,17 +85,18 @@
         ];
 
         function initGame() {
+            isMoving = false;
             const board = document.getElementById('game-board');
             const info = document.getElementById('level-info');
-            
-            // 儲存進度
+            document.getElementById('status-msg').innerText = "點擊箭頭移動，撞到障礙物即失敗！";
+            document.getElementById('status-msg').style.color = "#888";
+
             localStorage.setItem('tapAwayLevel', currentLevel);
             
-            // 難度與尺寸公式
             let difficulty = (currentLevel % 10 === 0) ? 5 : Math.min(4, 1 + Math.floor((currentLevel % 10) / 2.5));
             let boardSize = Math.min(50, 3 + Math.floor(currentLevel / 2));
             
-            info.innerText = `第 ${currentLevel} 關 (難度: ${difficulty}, 尺寸: ${boardSize}x${boardSize})`;
+            info.innerText = `第 ${currentLevel} 關 (難度: ${difficulty})`;
             
             board.innerHTML = '';
             board.style.gridTemplateColumns = `repeat(${boardSize}, 1fr)`;
@@ -129,7 +104,6 @@
             const blockSize = 40; 
             board.style.width = `${boardSize * (blockSize + 2)}px`;
 
-            // 根據難度決定配色
             const colors = ['#3498db', '#2ecc71', '#f1c40f', '#e67e22', '#e74c3c'];
             const levelColor = colors[difficulty - 1];
 
@@ -144,46 +118,65 @@
                     block.style.height = `${blockSize}px`;
                     block.style.backgroundColor = levelColor;
                     block.innerText = dir.icon;
-                    block.onclick = () => handleTap(x, y);
+                    block.onclick = () => handleMove(x, y);
                     
                     board.appendChild(block);
-                    gameState[y][x] = { dir, element: block };
+                    gameState[y][x] = { dir, element: block, x, y };
                 }
             }
             updateBoardTransform();
         }
 
-        function handleTap(x, y) {
+        async function handleMove(x, y) {
+            if (isMoving || !gameState[y][x]) return;
+            isMoving = true;
+
             const block = gameState[y][x];
-            if (!block) return;
-
             const { dx, dy } = block.dir;
-            let cx = x + dx, cy = y + dy;
-            let blocked = false;
+            let currentX = x;
+            let currentY = y;
+            let boardSize = gameState.length;
 
-            while (cx >= 0 && cx < gameState[0].length && cy >= 0 && cy < gameState.length) {
-                if (gameState[cy][cx]) { blocked = true; break; }
-                cx += dx; cy += dy;
-            }
+            // 移除原本位置的邏輯紀錄，開始移動
+            gameState[y][x] = null;
 
-            if (blocked) {
-                block.element.classList.add('shake');
-                setTimeout(() => block.element.classList.remove('shake'), 200);
-            } else {
-                block.element.style.transform = `translate(${dx * 800}px, ${dy * 800}px)`;
-                block.element.style.opacity = '0';
-                gameState[y][x] = null;
-                setTimeout(() => {
-                    block.element.remove();
-                    checkWin();
-                }, 400);
+            while (true) {
+                currentX += dx;
+                currentY += dy;
+
+                // 成功移出邊界
+                if (currentX < 0 || currentX >= boardSize || currentY < 0 || currentY >= boardSize) {
+                    block.element.style.transform = `translate(${dx * 1000}px, ${dy * 1000}px)`;
+                    block.element.style.opacity = '0';
+                    setTimeout(() => {
+                        block.element.remove();
+                        isMoving = false;
+                        checkWin();
+                    }, 300);
+                    break;
+                }
+
+                // 撞到其他方塊
+                if (gameState[currentY][currentX]) {
+                    document.getElementById('status-msg').innerText = "撞到了！本關失敗！";
+                    document.getElementById('status-msg').style.color = "#e74c3c";
+                    
+                    // 撞擊動畫
+                    block.element.style.transform = `translate(${dx * 20}px, ${dy * 20}px)`;
+                    
+                    setTimeout(() => {
+                        alert("失敗！請重置關卡。");
+                        initGame(); // 自動重置
+                    }, 400);
+                    break;
+                }
             }
         }
 
         function checkWin() {
             const remains = gameState.flat().some(cell => cell !== null);
             if (!remains) {
-                alert("恭喜！進入下一關");
+                alert("通關成功！下一關。");
                 currentLevel++;
                 initGame();
             }
@@ -199,12 +192,8 @@
             board.style.transform = `scale(${zoomLevel})`;
         }
 
-        function resetLevel() {
-            if(confirm("要重新配置本關嗎？")) initGame();
-        }
-
         function clearSave() {
-            if(confirm("確定要刪除所有進度，重頭開始嗎？")) {
+            if(confirm("確定要重頭開始嗎？")) {
                 localStorage.removeItem('tapAwayLevel');
                 currentLevel = 1;
                 initGame();
