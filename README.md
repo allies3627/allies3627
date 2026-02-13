@@ -1,4 +1,6 @@
-## Hi there 👋
+## Hi 大家好（我=大家）👋
+- 🔭 正在嘗試努力了解新科技生活
+- 🌱 學習如何氛圍聊天寫程式、學習程式邏輯跟語法，看得懂哪裡有錯誤
 
 <!--
 **allies3627/allies3627** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
